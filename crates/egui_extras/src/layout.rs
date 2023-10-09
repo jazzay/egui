@@ -26,6 +26,14 @@ pub(crate) enum CellDirection {
     Vertical,
 }
 
+/// Flags used by [`StripLayout::add`].
+#[derive(Clone, Copy, Default)]
+pub(crate) struct StripLayoutFlags {
+    pub(crate) clip: bool,
+    pub(crate) striped: bool,
+    pub(crate) highlighted: bool,
+}
+
 /// Positions cells in [`CellDirection`] and starts a new line on [`StripLayout::end_line`]
 pub struct StripLayout<'l> {
     pub(crate) ui: &'l mut Ui,
@@ -38,10 +46,16 @@ pub struct StripLayout<'l> {
     max: Pos2,
 
     cell_layout: egui::Layout,
+    sense: Sense,
 }
 
 impl<'l> StripLayout<'l> {
-    pub(crate) fn new(ui: &'l mut Ui, direction: CellDirection, cell_layout: egui::Layout) -> Self {
+    pub(crate) fn new(
+        ui: &'l mut Ui,
+        direction: CellDirection,
+        cell_layout: egui::Layout,
+        sense: Sense,
+    ) -> Self {
         let rect = ui.available_rect_before_wrap();
         let pos = rect.left_top();
 
@@ -52,6 +66,7 @@ impl<'l> StripLayout<'l> {
             cursor: pos,
             max: pos,
             cell_layout,
+            sense,
         }
     }
 
@@ -94,34 +109,44 @@ impl<'l> StripLayout<'l> {
     /// Return the used space (`min_rect`) plus the [`Response`] of the whole cell.
     pub(crate) fn add(
         &mut self,
-        clip: bool,
-        striped: bool,
+        flags: StripLayoutFlags,
         width: CellSize,
         height: CellSize,
         add_cell_contents: impl FnOnce(&mut Ui),
     ) -> (Rect, Response) {
         let max_rect = self.cell_rect(&width, &height);
 
-        if striped {
-            // Make sure we don't have a gap in the stripe background:
-            let stripe_rect = max_rect.expand2(0.5 * self.ui.spacing().item_spacing);
+        // Make sure we don't have a gap in the stripe/frame/selection background:
+        let gapless_rect = || max_rect.expand2(0.5 * self.ui.spacing().item_spacing);
 
-            self.ui
-                .painter()
-                .rect_filled(stripe_rect, 0.0, self.ui.visuals().faint_bg_color);
+        if flags.striped {
+            self.ui.painter().rect_filled(
+                gapless_rect(),
+                egui::Rounding::ZERO,
+                self.ui.visuals().faint_bg_color,
+            );
         }
 
-        let used_rect = self.cell(clip, max_rect, add_cell_contents);
+        if flags.highlighted {
+            self.ui.painter().rect_filled(
+                gapless_rect(),
+                egui::Rounding::ZERO,
+                self.ui.visuals().selection.bg_fill,
+            );
+        }
+
+        let response = self.ui.allocate_rect(max_rect, self.sense);
+        let used_rect = self.cell(flags.clip, max_rect, add_cell_contents);
 
         self.set_pos(max_rect);
 
-        let allocation_rect = if clip {
+        let allocation_rect = if flags.clip {
             max_rect
         } else {
             max_rect.union(used_rect)
         };
 
-        let response = self.ui.allocate_rect(allocation_rect, Sense::hover());
+        let response = response.with_new_rect(allocation_rect);
 
         (used_rect, response)
     }
